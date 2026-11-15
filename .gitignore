@@ -1,0 +1,10 @@
+# Локальные черновики и данные
+*.local
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# APK кладём только в Releases, не в историю git
+*.apk
+*.aab
