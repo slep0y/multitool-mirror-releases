@@ -8,13 +8,14 @@
 
 | Файл | Кому |
 | --- | --- |
-| `multitool-mirror.apk` (в разделе [Releases](../../releases/latest)) | на телефон |
+| `multitool-mirror-<версия>.apk` (в разделе [Releases](../../releases/latest)) | на телефон |
 | папка [`bridge/`](bridge) | на компьютер с MultiTool |
 
-Постоянная ссылка на последнюю версию приложения:
+Номер версии стоит прямо в имени файла, поэтому видно, что именно скачано: например
+`multitool-mirror-0.1.9.apk`. Страница последней версии:
 
 ```
-https://github.com/slep0y/multitool-mirror-releases/releases/latest/download/multitool-mirror.apk
+https://github.com/slep0y/multitool-mirror-releases/releases/latest
 ```
 
 ## Что нужно
@@ -58,7 +59,7 @@ pwsh -File .\status.ps1
 
 ## Установка на телефон
 
-1. Скачайте `multitool-mirror.apk` по ссылке выше и откройте файл на телефоне. Android попросит
+1. Скачайте `multitool-mirror-<версия>.apk` из последнего релиза и откройте файл на телефоне. Android попросит
    разрешить установку из этого источника — разрешите для браузера или файлового менеджера.
 2. Запустите приложение.
 
@@ -77,7 +78,7 @@ pwsh -File .\status.ps1
   последний релиз, покажет новую версию и её размер, скачает APK и откроет установщик. Если версия
   уже последняя, так и напишет.
 - Последняя версия всегда лежит в разделе [Releases](../../releases/latest); там же `CHANGELOG.md`.
-- Постоянная ссылка `…/releases/latest/download/multitool-mirror.apk` не меняется от версии к версии.
+- Файл в релизе назван с номером версии — `multitool-mirror-0.1.9.apk`; имя меняется вместе с версией.
 - Программа, которой нужен номер последней версии, может спросить GitHub API:
   `https://api.github.com/repos/slep0y/multitool-mirror-releases/releases/latest`
   (поле `tag_name`, файл — в `assets[].browser_download_url`).
@@ -102,7 +103,7 @@ SHA-256 `9877b9a75a1d139bddc65df38ac37200724c4b74ac9abb834e8f5492efa00ecc`). П�
 встают поверх предыдущей версии. Проверить подпись скачанного файла:
 
 ```powershell
-& "$env:LOCALAPPDATA\Android\Sdk\build-tools\35.0.0\apksigner.bat" verify --print-certs .\multitool-mirror.apk
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\35.0.0\apksigner.bat" verify --print-certs .\multitool-mirror-0.1.9.apk
 ```
 
 Если в будущем ключ придётся сменить, Android откажется ставить обновление поверх: тогда удалите
