@@ -12,7 +12,7 @@
 | папка [`bridge/`](bridge) | на компьютер с MultiTool |
 
 Номер версии стоит прямо в имени файла, поэтому видно, что именно скачано: например
-`multitool-mirror-0.1.19.apk`. Страница последней версии:
+`multitool-mirror-0.1.20.apk`. Страница последней версии:
 
 ```
 https://github.com/slep0y/multitool-mirror-releases/releases/latest
@@ -104,7 +104,7 @@ pwsh -File .\status.ps1
   «Обновить версию». Приложение проверит последний релиз, покажет новую версию и её размер, скачает
   APK с прогрессом и откроет установщик. Если версия уже последняя, так и напишет.
 - Последняя версия всегда лежит в разделе [Releases](../../releases/latest); там же `CHANGELOG.md`.
-- Файл в релизе назван с номером версии — `multitool-mirror-0.1.19.apk`; имя меняется вместе с версией.
+- Файл в релизе назван с номером версии — `multitool-mirror-0.1.20.apk`; имя меняется вместе с версией.
 - Программа, которой нужен номер последней версии, может спросить GitHub API:
   `https://api.github.com/repos/slep0y/multitool-mirror-releases/releases/latest`
   (поле `tag_name`, файл — в `assets[].browser_download_url`).
@@ -129,7 +129,7 @@ SHA-256 `9877b9a75a1d139bddc65df38ac37200724c4b74ac9abb834e8f5492efa00ecc`). П�
 встают поверх предыдущей версии. Проверить подпись скачанного файла:
 
 ```powershell
-& "$env:LOCALAPPDATA\Android\Sdk\build-tools\35.0.0\apksigner.bat" verify --print-certs .\multitool-mirror-0.1.19.apk
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\35.0.0\apksigner.bat" verify --print-certs .\multitool-mirror-0.1.20.apk
 ```
 
 Если в будущем ключ придётся сменить, Android откажется ставить обновление поверх: тогда удалите
