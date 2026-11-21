@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REG_KEY = Symbol.for("multitool.mirror.registry");
-const VERSION = "0.1.9";
+const VERSION = "0.1.10";
 const APK_PATH = process.env.MULTITOOL_MIRROR_APK || fileURLToPath(new URL("../android/app/build/outputs/apk/debug/app-debug.apk", import.meta.url));
 const DEFAULT_PORT = Number(process.env.MULTITOOL_MIRROR_PORT || 8799);
 const DISCOVERY_PORT = Number(process.env.MULTITOOL_MIRROR_DISCOVERY_PORT || 8798);
@@ -143,6 +143,7 @@ function registry() {
       sessions: new Map(),
       permissions: new Map(),
       questions: new Map(),
+      statuses: new Map(),
       requests: [],
       subscribers: new Set(),
       events: [],
@@ -391,21 +392,94 @@ function normalizePermission(request) {
   };
 }
 
+const STATUS_TOOL_LINES = {
+  read: "Читаю",
+  list: "Смотрю папку",
+  glob: "Ищу файлы",
+  grep: "Ищу в файлах",
+  edit: "Правлю",
+  write: "Пишу",
+  apply_patch: "Правлю файлы",
+  bash: "Выполняю команду",
+  shell: "Выполняю команду",
+  websearch: "Ищу в интернете",
+  webfetch: "Открываю страницу",
+  skill: "Загружаю навык",
+  task: "Работает помощник",
+  todowrite: "Планирую",
+  todoupdate: "Обновляю план",
+  todoread: "Смотрю план",
+};
+const STATUS_FILE_TOOLS = new Set(["read", "edit", "write"]);
+
+function shortText(value, limit = 40) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1)}…`;
+}
+
+function baseName(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  return text.split(/[\\/]/).filter(Boolean).pop() || "";
+}
+
+function statusFromPart(part) {
+  if (!part || typeof part !== "object") return null;
+  if (part.type === "tool") {
+    if (part.state?.status !== "running") return "Думаю";
+    const input = part.state?.input ?? {};
+    const target = STATUS_FILE_TOOLS.has(part.tool)
+      ? shortText(baseName(input.filePath ?? input.path), 40)
+      : part.tool === "skill" ? shortText(input.name, 32) : "";
+    const line = STATUS_TOOL_LINES[part.tool] || shortText(part.state?.title, 48) || "Работаю";
+    return shortText([line, target].filter(Boolean).join(" "), 56);
+  }
+  if (part.type === "reasoning") return part.text ? "Думаю" : null;
+  if (part.type === "text") return part.text ? "Пишу ответ" : null;
+  if (part.type === "step-start") return "Думаю";
+  return null;
+}
+
+function setStatus(reg, sessionID, text) {
+  if (!sessionID) return;
+  const current = reg.statuses.get(sessionID) || null;
+  const next = text || null;
+  if (current === next) return;
+  if (next) reg.statuses.set(sessionID, next);
+  else reg.statuses.delete(sessionID);
+  publish(reg, "mirror.status", { sessionID, text: next }, sessionID);
+}
+
 function handleEvent(reg, raw) {
   const type = raw?.type;
   if (!type || !FORWARD_EVENTS.has(type)) return;
   if (!dedupe(reg, raw)) return;
   const props = raw.properties ?? {};
+  if (type === "message.part.updated") {
+    const phrase = statusFromPart(props.part);
+    if (phrase) setStatus(reg, props.part?.sessionID ?? props.sessionID ?? null, phrase);
+  }
+  if (type === "session.status") {
+    const kind = props.status?.type;
+    if (kind === "idle") setStatus(reg, props.sessionID, null);
+    else if (kind === "retry") setStatus(reg, props.sessionID, `Повторяю (${props.status?.attempt ?? 1})`);
+    else setStatus(reg, props.sessionID, "Думаю");
+  }
+  if (type === "session.idle") setStatus(reg, props.sessionID, null);
+  if (type === "session.error") setStatus(reg, props.sessionID, null);
   if (type === "permission.asked" || type === "permission.updated") {
     const permission = normalizePermission(props);
     if (!permission) return;
     reg.permissions.set(permission.id, permission);
+    setStatus(reg, permission.sessionID, "Жду разрешения");
     publish(reg, "permission.updated", permission, permission.sessionID);
     return;
   }
   if (type === "permission.replied") {
     const requestID = props.requestID || props.permissionID;
     if (requestID) reg.permissions.delete(requestID);
+    setStatus(reg, props.sessionID, "Думаю");
     publish(
       reg,
       "permission.replied",
@@ -416,9 +490,11 @@ function handleEvent(reg, raw) {
   }
   if (type === "question.asked" && props.id) {
     reg.questions.set(props.id, props);
+    setStatus(reg, props.sessionID, "Жду ответа");
   }
   if ((type === "question.replied" || type === "question.rejected") && props.requestID) {
     reg.questions.delete(props.requestID);
+    setStatus(reg, props.sessionID, "Думаю");
   }
   if (type === "session.updated" && props.info?.id) {
     reg.sessions.set(props.info.id, props.info);
