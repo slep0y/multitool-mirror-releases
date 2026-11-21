@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REG_KEY = Symbol.for("multitool.mirror.registry");
-const VERSION = "0.1.10";
+const VERSION = "0.1.11";
 const APK_PATH = process.env.MULTITOOL_MIRROR_APK || fileURLToPath(new URL("../android/app/build/outputs/apk/debug/app-debug.apk", import.meta.url));
 const DEFAULT_PORT = Number(process.env.MULTITOOL_MIRROR_PORT || 8799);
 const DISCOVERY_PORT = Number(process.env.MULTITOOL_MIRROR_DISCOVERY_PORT || 8798);
@@ -410,7 +410,6 @@ const STATUS_TOOL_LINES = {
   todoupdate: "Обновляю план",
   todoread: "Смотрю план",
 };
-const STATUS_FILE_TOOLS = new Set(["read", "edit", "write"]);
 
 function shortText(value, limit = 40) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
@@ -424,22 +423,87 @@ function baseName(value) {
   return text.split(/[\\/]/).filter(Boolean).pop() || "";
 }
 
+const STATUS_SILENT = new Set(["todowrite", "todoupdate"]);
+const STATUS_PATCH_TOOLS = new Set(["apply_patch", "patch"]);
+const STATUS_PATH_KEYS = new Set(["filePath", "path"]);
+const STATUS_TARGET_KEYS = ["description", "filePath", "path", "name", "pattern", "url", "query", "patchText"];
+
+function firstLine(value) {
+  return String(value ?? "").split(/\r?\n/)[0].trim();
+}
+
+function partialString(raw, key) {
+  const head = new RegExp(`"${key}"\\s*:\\s*"`).exec(raw);
+  if (!head) return "";
+  let out = "";
+  for (let i = head.index + head[0].length; i < raw.length; i += 1) {
+    const char = raw[i];
+    if (char === '"' && raw[i - 1] !== "\\") break;
+    out += char;
+    if (out.length > 4000) break;
+  }
+  try {
+    return JSON.parse(`"${out.replace(/\\+$/, "")}"`);
+  } catch {
+    return out.replace(/\\+$/, "");
+  }
+}
+
+function statusTarget(tool, raw, input) {
+  if (STATUS_PATCH_TOOLS.has(tool)) {
+    const text = String(input?.patchText ?? raw ?? "");
+    const head = /\*\*\* (?:Add|Update) File: ([^\n]+)/.exec(text.slice(0, 4096));
+    return shortText(baseName(head?.[1]), 40);
+  }
+  const source = input ?? null;
+  for (const key of STATUS_TARGET_KEYS) {
+    const value = source?.[key] ?? (raw ? partialString(raw, key) : "");
+    if (typeof value !== "string" || !value.trim()) continue;
+    return shortText(STATUS_PATH_KEYS.has(key) ? baseName(value) : firstLine(value), 40);
+  }
+  return "";
+}
+
+const STATUS_KEYWORDS = [
+  [/^skill(_|$)|_skill$/, "Загружаю навык"],
+  [/^websearch|^web_search|search_web/, "Ищу в интернете"],
+  [/^webfetch|fetch_url|^browser/, "Открываю страницу"],
+  [/(?:^|_)image_generation(_|$)|generate_image|imagegen|text2image|gigachat_image/, "Генерирую изображение"],
+  [/^computer_use/, "Работаю на компьютере"],
+  [/^task(_|$)|^agent$/, "Работает помощник"],
+  [/mail|mailbox|imap|smtp|_letter$/, "Читаю почту"],
+  [/calendar/, "Смотрю календарь"],
+  [/docx|word$|_word$/, "Собираю документ"],
+  [/xlsx|sheet|excel/, "Собираю таблицу"],
+  [/pptx|slide/, "Собираю презентацию"],
+  [/\bpdf\b|_pdf$|pdf$/, "Собираю PDF"],
+];
+
+
 function statusFromPart(part) {
   if (!part || typeof part !== "object") return null;
   if (part.type === "tool") {
-    if (part.state?.status !== "running") return "Думаю";
-    const input = part.state?.input ?? {};
-    const target = STATUS_FILE_TOOLS.has(part.tool)
-      ? shortText(baseName(input.filePath ?? input.path), 40)
-      : part.tool === "skill" ? shortText(input.name, 32) : "";
-    const line = STATUS_TOOL_LINES[part.tool] || shortText(part.state?.title, 48) || "Работаю";
+    if (STATUS_SILENT.has(part.tool)) return null;
+    const state = part.state ?? {};
+    const raw = state.raw ?? part.raw ?? "";
+    if (state.status === "pending") {
+      if (part.tool === "task") return null;
+      const target = statusTarget(part.tool, raw, null);
+      return shortText(target ? `Готовлю ${target}` : "Готовлю действие", 56);
+    }
+    if (state.status !== "running" && state.status !== "completed" && state.status !== "error") return null;
+    const target = statusTarget(part.tool, raw, state.input);
+    const known = STATUS_TOOL_LINES[part.tool] || STATUS_KEYWORDS.find(([re]) => re.test(part.tool))?.[1];
+    const line = known || `Работаю: ${shortText(part.tool, 32)}`;
     return shortText([line, target].filter(Boolean).join(" "), 56);
   }
   if (part.type === "reasoning") return part.text ? "Думаю" : null;
   if (part.type === "text") return part.text ? "Пишу ответ" : null;
   if (part.type === "step-start") return "Думаю";
+  if (part.type === "step-finish") return "Думаю";
   return null;
 }
+
 
 function setStatus(reg, sessionID, text) {
   if (!sessionID) return;
@@ -457,8 +521,10 @@ function handleEvent(reg, raw) {
   if (!dedupe(reg, raw)) return;
   const props = raw.properties ?? {};
   if (type === "message.part.updated") {
+    const sessionID = props.part?.sessionID ?? props.sessionID ?? null;
     const phrase = statusFromPart(props.part);
-    if (phrase) setStatus(reg, props.part?.sessionID ?? props.sessionID ?? null, phrase);
+    if (phrase) setStatus(reg, sessionID, phrase);
+    else if (props.part?.type === "tool") setStatus(reg, sessionID, "Думаю");
   }
   if (type === "session.status") {
     const kind = props.status?.type;
