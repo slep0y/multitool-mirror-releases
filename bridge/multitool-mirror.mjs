@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REG_KEY = Symbol.for("multitool.mirror.registry");
-const VERSION = "0.1.16";
+const VERSION = "0.1.17";
 const APK_PATH = process.env.MULTITOOL_MIRROR_APK || fileURLToPath(new URL("../android/app/build/outputs/apk/debug/app-debug.apk", import.meta.url));
 const DEFAULT_PORT = Number(process.env.MULTITOOL_MIRROR_PORT || 8799);
 const DISCOVERY_PORT = Number(process.env.MULTITOOL_MIRROR_DISCOVERY_PORT || 8798);
@@ -455,12 +455,15 @@ function statusTarget(tool, raw, input) {
     const head = /\*\*\* (?:Add|Update) File: ([^\n]+)/.exec(text.slice(0, 4096));
     return shortText(baseName(head?.[1]), 40);
   }
+  if (tool === "task" && typeof input?.description === "string") return shortText(firstLine(input.description), 40);
   const source = input ?? null;
   for (const key of STATUS_TARGET_KEYS) {
+    if (key === "description") continue;
     const value = source?.[key] ?? (raw ? partialString(raw, key) : "");
     if (typeof value !== "string" || !value.trim()) continue;
     return shortText(STATUS_PATH_KEYS.has(key) ? baseName(value) : firstLine(value), 40);
   }
+  if (typeof input?.description === "string" && input.description.trim()) return shortText(firstLine(input.description), 40);
   return "";
 }
 
@@ -495,6 +498,7 @@ function statusCommand(input, metadata) {
   // Запуск скрипта или файла (node x.mjs, pwsh -File x.ps1, "./x.cjs; …") — тоже не код в строке статуса.
   const runsScript = /(?:^|[\s;(&|])(?:node|pwsh|powershell|python3?|bash|sh)\b[^;|&]*\.\w{1,5}\b/i.test(full) || /^["']?[^\s"']*\.\w{1,5}["']?(?:\s|;|$)/.test(segment);
   if (runsScript && segments.length > 1) return "Выполняю скрипт";
+  if (isCommandCode(full)) return "Выполняю скрипт";
   let words = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
   for (let i = 0; i < 3 && words.length; i += 1) {
     const word = words[0];
@@ -514,6 +518,14 @@ function statusCommand(input, metadata) {
   return shortText(text.charAt(0).toUpperCase() + text.slice(1), 48) + (segments.length > 1 ? "…" : "");
 }
 
+function looksLikeCode(text) {
+  return text.includes("\n") || /\$\w+\s*=|\b(let|const|var|function|import|require\(|try\s*\{|catch\s*\(|=>|::)|[{}\[];?$/.test(text);
+}
+
+function isCommandCode(command) {
+  return /(?:^|[\s=;'"(])(?:try|catch|finally)\s*\{|=>|\$\w+\s*=|['"]\)?\s*\{/.test(command);
+}
+
 function statusFromPart(part) {
   if (!part || typeof part !== "object") return null;
   if (part.type === "tool") {
@@ -523,14 +535,16 @@ function statusFromPart(part) {
     if (state.status === "pending") {
       if (part.tool === "task") return null;
       const target = statusTarget(part.tool, raw, null);
-      return shortText(target ? `Готовлю ${target}` : "Готовлю действие", 56);
+      return shortText(target && !looksLikeCode(target) ? `Готовлю ${target}` : "Готовлю действие", 56);
     }
     if (state.status !== "running" && state.status !== "completed" && state.status !== "error") return null;
     const target = statusTarget(part.tool, raw, state.input);
     if (STATUS_COMMANDS.has(part.tool)) return shortText(statusCommand(state.input, state.metadata), 56);
     const known = STATUS_TOOL_LINES[part.tool] || STATUS_KEYWORDS.find(([re]) => re.test(part.tool))?.[1];
     const line = known || `Работаю: ${shortText(part.tool, 32)}`;
-    return shortText([line, target].filter(Boolean).join(" "), 56);
+    // Цель, похожая на код (описание скрипта, тело патча), в строку статуса не идёт.
+    const safe = target && !looksLikeCode(target) ? target : "";
+    return shortText([line, safe].filter(Boolean).join(" "), 56);
   }
   if (part.type === "reasoning") return part.text ? "Думаю" : null;
   if (part.type === "text") return part.text ? "Пишу ответ" : null;
@@ -538,7 +552,6 @@ function statusFromPart(part) {
   if (part.type === "step-finish") return "Думаю";
   return null;
 }
-
 
 function setStatus(reg, sessionID, text) {
   if (!sessionID) return;
