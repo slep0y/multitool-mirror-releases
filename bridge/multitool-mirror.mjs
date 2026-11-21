@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REG_KEY = Symbol.for("multitool.mirror.registry");
-const VERSION = "0.1.11";
+const VERSION = "0.1.12";
 const APK_PATH = process.env.MULTITOOL_MIRROR_APK || fileURLToPath(new URL("../android/app/build/outputs/apk/debug/app-debug.apk", import.meta.url));
 const DEFAULT_PORT = Number(process.env.MULTITOOL_MIRROR_PORT || 8799);
 const DISCOVERY_PORT = Number(process.env.MULTITOOL_MIRROR_DISCOVERY_PORT || 8798);
@@ -480,6 +480,36 @@ const STATUS_KEYWORDS = [
 ];
 
 
+const STATUS_COMMANDS = new Set(["bash", "shell"]);
+const STATUS_VERBS = { "New-Item": "Создаю", ni: "Создаю", "Copy-Item": "Копирую", cp: "Копирую", "Move-Item": "Перемещаю", mv: "Перемещаю", "Remove-Item": "Удаляю", rm: "Удаляю", del: "Удаляю" };
+const STATUS_VERB_FLAGS = new Set(["-C", "-c", "--directory", "--git-dir", "-m", "--title", "--notes-file", "--repo", "-q", "--quiet", "--console", "--filter", "--include", "-Path", "-LiteralPath", "-Destination", "-Force"]);
+const STATUS_BINARIES = new Set(["git", "gh", "npm", "npx", "node", "gradle", "pwsh", "powershell", "python", "python3", "pip", "dotnet", "curl", "winget", "java", "adb", "code"]);
+
+// Фраза из самой команды: «Выполняю команду» перед ней только мешала.
+function statusCommand(input, metadata) {
+  const full = String(input?.command ?? "").trim();
+  if (!full) return "Выполняю команду";
+  const segments = full.split(/&&|\|\|/).map((part) => part.trim()).filter(Boolean);
+  const segment = (segments[0] ?? full).replace(/^["']?[^"']*\.(ps1|cmd|bat|sh)["']?\s*;\s*/i, "");
+  let words = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  for (let i = 0; i < 3 && words.length; i += 1) {
+    const word = words[0];
+    if (/^-{1,2}[\w-]+$/.test(word)) { words = words.slice(STATUS_VERB_FLAGS.has(word) ? 2 : 1); continue; }
+    if (!/^["']/.test(word) && (/[\\/]/.test(word) || STATUS_BINARIES.has(word.toLowerCase()))) { words = words.slice(1); continue; }
+    break;
+  }
+  const head = words[0] ?? "";
+  if (STATUS_VERBS[head]) {
+    const file = words.find((word) => /\.[A-Za-z0-9]{1,5}$/.test(word.replace(/["']/g, "")));
+    return shortText(`${STATUS_VERBS[head]} ${file ? baseName(file) : "файл"}`, 56);
+  }
+  const text = words.filter((word) => !/^-{1,2}[\w-]+$/.test(word)).join(" ").replace(/\s+/g, " ").trim();
+  const title = typeof metadata?.title === "string" ? metadata.title.trim() : "";
+  if (title) return shortText(title.charAt(0).toUpperCase() + title.slice(1), 48);
+  if (!text) return "Выполняю команду";
+  return shortText(text.charAt(0).toUpperCase() + text.slice(1), 48) + (segments.length > 1 ? "…" : "");
+}
+
 function statusFromPart(part) {
   if (!part || typeof part !== "object") return null;
   if (part.type === "tool") {
@@ -493,6 +523,7 @@ function statusFromPart(part) {
     }
     if (state.status !== "running" && state.status !== "completed" && state.status !== "error") return null;
     const target = statusTarget(part.tool, raw, state.input);
+    if (STATUS_COMMANDS.has(part.tool)) return shortText(statusCommand(state.input, state.metadata), 56);
     const known = STATUS_TOOL_LINES[part.tool] || STATUS_KEYWORDS.find(([re]) => re.test(part.tool))?.[1];
     const line = known || `Работаю: ${shortText(part.tool, 32)}`;
     return shortText([line, target].filter(Boolean).join(" "), 56);
