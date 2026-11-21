@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REG_KEY = Symbol.for("multitool.mirror.registry");
-const VERSION = "0.1.12";
+const VERSION = "0.1.14";
 const APK_PATH = process.env.MULTITOOL_MIRROR_APK || fileURLToPath(new URL("../android/app/build/outputs/apk/debug/app-debug.apk", import.meta.url));
 const DEFAULT_PORT = Number(process.env.MULTITOOL_MIRROR_PORT || 8799);
 const DISCOVERY_PORT = Number(process.env.MULTITOOL_MIRROR_DISCOVERY_PORT || 8798);
@@ -491,6 +491,8 @@ function statusCommand(input, metadata) {
   if (!full) return "Выполняю команду";
   const segments = full.split(/&&|\|\|/).map((part) => part.trim()).filter(Boolean);
   const segment = (segments[0] ?? full).replace(/^["']?[^"']*\.(ps1|cmd|bat|sh)["']?\s*;\s*/i, "");
+  // Heredoc (PowerShell @'…'@ / @"…"@, bash <<EOF) — это скрипт, а не команда: ему не место в строке статуса.
+  if (/^(?:\$[\w:]+\s*=\s*)?@["']|<<-?\s*["']?\w/.test(segment)) return "Выполняю скрипт";
   let words = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
   for (let i = 0; i < 3 && words.length; i += 1) {
     const word = words[0];
@@ -774,6 +776,26 @@ async function route(req, res, reg) {
     writeStatus(reg, store);
     publish(reg, "mirror.unpaired", { deviceID: parts[2] });
     json(res, 200, { ok: true });
+    return;
+  }
+
+  if (url.pathname === "/api/busy" && req.method === "GET") {
+    const sessionID = url.searchParams.get("session") || "";
+    const owner = reg.sessionOwner.get(sessionID);
+    const instance = owner && reg.instances.has(owner) ? reg.instances.get(owner) : null;
+    if (!instance?.raw || !sessionID) {
+      json(res, 200, { busy: null, status: reg.statuses.get(sessionID) || null });
+      return;
+    }
+    try {
+      const response = await instance.raw.get({ url: "/session/status", query: { directory: instance.directory } });
+      const all = response?.data;
+      const status = all && typeof all === "object" ? all[sessionID] : null;
+      json(res, 200, { busy: status?.type === "busy" || status?.type === "retry", status: reg.statuses.get(sessionID) || null, engine: status?.type ?? "idle" });
+    } catch (error) {
+      reg.lastError = `${nowIso()} session status: ${error?.message || error}`;
+      json(res, 503, { busy: null, status: reg.statuses.get(sessionID) || null });
+    }
     return;
   }
 
